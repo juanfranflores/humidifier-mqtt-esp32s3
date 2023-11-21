@@ -1,0 +1,21 @@
+{
+    "topic": "homeassistant/switch/humidifier/command/config",
+    "payload": {
+        "~": "homeassistant/switch/humidifier/command",
+        "name": "Comando",
+        "unique_id": "humidifier_command",
+        "cmd_t": "~",
+        "payload_off": "0",
+        "payload_on": "1",
+        "icon": "mdi:air-humidifier",
+        "retain": "false",
+        "device": {
+            "identifiers": [
+                "humidifier"
+            ],
+            "name": "Humidifier",
+            "model": "Humidifier",
+            "manufacturer": "Juan Flores"
+        }
+    }
+}
