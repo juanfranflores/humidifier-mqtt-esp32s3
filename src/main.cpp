@@ -5,8 +5,10 @@
 // ---------------------------- DEFINICIÓN DE PINES ----------------------------
 
 #define HUMIDIFIER_PIN 12
-#define ON_PIN 14
+#define DRY_LED 13
+#define ON_LED 14
 #define DRY_PIN 15
+#define ON_PIN 16
 
 // ---------------------------- CREDENCIALES DE CONEXIÓN ----------------------------
 
@@ -23,7 +25,7 @@ const String DRY = "Falta agua";
 
 //  ---------------------------- TOPICS  ----------------------------
 
-const char *humidifierStatusTopic = "homeassistant/sensor/humidifier/status";
+const char *humidifierStatusTopic = "homeassistant/switch/humidifier/status";
 const char *humidifierCmdTopic = "homeassistant/switch/humidifier/command";
 
 //  ---------------------------- INSTANCIACIÓN DE OBJETOS ----------------------------
@@ -34,7 +36,7 @@ PubSubClient client(espClient);
 void setup_wifi();
 void reconnect();
 void callback(char *topic, byte *message, unsigned int length);
-void changeStatus(String command);
+void setStatus(String command);
 void publishStatus(const char *topic, String command);
 
 void setup()
@@ -43,11 +45,14 @@ void setup()
   pinMode(HUMIDIFIER_PIN, OUTPUT);
   pinMode(ON_PIN, INPUT_PULLUP);
   pinMode(DRY_PIN, INPUT_PULLUP);
+  pinMode(ON_LED, OUTPUT);
+  pinMode(DRY_LED, OUTPUT);
   delay(2000);
   Serial.println("Encendido :)");
   setup_wifi();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
+  setStatus(OFF);
   reconnect();
 }
 
@@ -59,7 +64,6 @@ void loop()
   }
   client.loop();
 }
-
 //  ---------------------------- DEFINICIÓN DE FUNCIONES ----------------------------
 void setup_wifi()
 {
@@ -124,34 +128,45 @@ void callback(char *topic, byte *message, unsigned int length)
   {
     if (messageTemp == "1")
     {
-      changeStatus(ON);
+      setStatus(ON);
     }
     else if (messageTemp == "0")
     {
-      changeStatus(OFF);
+      setStatus(OFF);
     }
   }
 }
 
-void changeStatus(String status)
+void setStatus(String status)
 {
   if (status == ON)
   {
-    Serial.println("Enciendo humidificador");
-    digitalWrite(HUMIDIFIER_PIN, HIGH);
-    publishStatus(humidifierStatusTopic, ON);
+    //por ahora no verifico si está seco o no.
+    // delay(500);
+    // if (!digitalRead(DRY_PIN))
+    // {
+      Serial.println("Enciendo humidificador");
+      digitalWrite(HUMIDIFIER_PIN, HIGH);
+      digitalWrite(ON_LED, HIGH);
+      digitalWrite(DRY_LED, LOW);
+      publishStatus(humidifierStatusTopic, ON);
+    // }
+    // else
+    // {
+      // Serial.println("Apago humidificador por falta de agua");
+      // digitalWrite(HUMIDIFIER_PIN, LOW);
+      // digitalWrite(ON_LED, LOW);
+      // digitalWrite(DRY_LED, HIGH);
+      // publishStatus(humidifierStatusTopic, DRY);
+    // }
   }
   else if (status == OFF)
   {
     Serial.println("Apago humidificador");
     digitalWrite(HUMIDIFIER_PIN, LOW);
+    digitalWrite(ON_LED, LOW);
+    digitalWrite(DRY_LED, LOW);
     publishStatus(humidifierStatusTopic, OFF);
-  }
-  else
-  {
-    Serial.println("Apago humidificador por falta de agua");
-    digitalWrite(HUMIDIFIER_PIN, LOW);
-    publishStatus(humidifierStatusTopic, DRY);
   }
 }
 

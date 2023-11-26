@@ -1,10 +1,11 @@
 {
-    "topic": "homeassistant/switch/humidifier/command/config",
+    "topic": "homeassistant/switch/humidifier/config",
     "payload": {
-        "~": "homeassistant/switch/humidifier/command",
-        "name": "Comando",
+        "~": "homeassistant/switch/humidifier",
+        "name": "Control",
         "unique_id": "humidifier_command",
-        "cmd_t": "~",
+        "cmd_t": "~/command",
+        "stat_t": "~/status",
         "payload_off": "0",
         "payload_on": "1",
         "icon": "mdi:air-humidifier",
