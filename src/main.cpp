@@ -23,6 +23,10 @@ const String ON = "Encendido";
 const String OFF = "Apagado";
 const String DRY = "Falta agua";
 
+// ---------------------------- VARIABLES GLOBALES ----------------------------
+
+volatile bool drySignalDetected = false;
+
 //  ---------------------------- TOPICS  ----------------------------
 
 const char *humidifierStatusTopic = "homeassistant/switch/humidifier/status";
@@ -38,6 +42,7 @@ void reconnect();
 void callback(char *topic, byte *message, unsigned int length);
 void setStatus(String command);
 void publishStatus(const char *topic, String command);
+void handleDrySignal();
 
 void setup()
 {
@@ -47,6 +52,7 @@ void setup()
   pinMode(DRY_PIN, INPUT_PULLUP);
   pinMode(ON_LED, OUTPUT);
   pinMode(DRY_LED, OUTPUT);
+  attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
   delay(2000);
   Serial.println("Encendido :)");
   setup_wifi();
@@ -63,6 +69,15 @@ void loop()
     reconnect();
   }
   client.loop();
+  if (drySignalDetected)
+  {
+    Serial.println("Turning off humidifier due to dry signal");
+    digitalWrite(HUMIDIFIER_PIN, LOW); // turn off the humidifier
+    digitalWrite(ON_LED, LOW);
+    digitalWrite(DRY_LED, HIGH);
+    publishStatus(humidifierStatusTopic, DRY); // change the status to dry
+    drySignalDetected = false;                 // reset the flag
+  }
 }
 //  ---------------------------- DEFINICIÓN DE FUNCIONES ----------------------------
 void setup_wifi()
@@ -141,36 +156,48 @@ void setStatus(String status)
 {
   if (status == ON)
   {
-    //por ahora no verifico si está seco o no.
-    // delay(500);
-    // if (!digitalRead(DRY_PIN))
-    // {
-      Serial.println("Enciendo humidificador");
+    detachInterrupt(digitalPinToInterrupt(DRY_PIN));
+    digitalWrite(HUMIDIFIER_PIN, HIGH);
+    delay(1000);
+    if (digitalRead(DRY_PIN) == LOW) 
+    {
+      digitalWrite(HUMIDIFIER_PIN, LOW);
+      delay(1000);
       digitalWrite(HUMIDIFIER_PIN, HIGH);
       digitalWrite(ON_LED, HIGH);
       digitalWrite(DRY_LED, LOW);
-      publishStatus(humidifierStatusTopic, ON);
-    // }
-    // else
-    // {
-      // Serial.println("Apago humidificador por falta de agua");
-      // digitalWrite(HUMIDIFIER_PIN, LOW);
-      // digitalWrite(ON_LED, LOW);
-      // digitalWrite(DRY_LED, HIGH);
-      // publishStatus(humidifierStatusTopic, DRY);
-    // }
+    }
+    else
+    {
+      status = DRY;
+      digitalWrite(HUMIDIFIER_PIN, LOW); // turn off the humidifier
+      digitalWrite(ON_LED, LOW);
+      digitalWrite(DRY_LED, HIGH);
+      Serial.println("Turning off humidifier due to dry signal");
+    }
   }
   else if (status == OFF)
   {
-    Serial.println("Apago humidificador");
     digitalWrite(HUMIDIFIER_PIN, LOW);
     digitalWrite(ON_LED, LOW);
     digitalWrite(DRY_LED, LOW);
-    publishStatus(humidifierStatusTopic, OFF);
   }
+  publishStatus(humidifierStatusTopic, status);
+  Serial.print("Humidifier status: ");
+  Serial.println(status);
+  delay(1000);
+  attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
 }
 
 void publishStatus(const char *topic, String status)
 {
   client.publish(topic, String(status).c_str(), true);
+}
+
+void handleDrySignal()
+{
+  if (digitalRead(DRY_PIN) == HIGH)
+  {
+    drySignalDetected = true;
+  }
 }
