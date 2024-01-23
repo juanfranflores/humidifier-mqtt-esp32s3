@@ -24,7 +24,7 @@ String clientIp = "";
 const String ON = "ON";
 const String OFF = "OFF";
 const String DRY = "DRY";
-const unsigned long drySignalInterval = 15000; // 10 seconds
+const unsigned long drySignalInterval = 10000; // 10 seconds
 
 const char *humidifierStatusTopic = "homeassistant/switch/humidifier/status";
 const char *humidifierSetTopic = "homeassistant/switch/humidifier/set";
@@ -34,6 +34,7 @@ const char *humidifierIpTopic = "homeassistant/text/humidifier/ip";
 volatile bool drySignalDetected = false;
 unsigned long lastDrySignalTime = 0;
 bool firstDrySignal = true;
+bool interruptEnabled = false;
 
 // ----------------------Inicialización de librerías----------------------
 WebServer server(80);
@@ -52,6 +53,7 @@ void callback(char *topic, byte *message, unsigned int length);
 void handleDrySignal();
 void setStatus(String status);
 void publishStatus(String status);
+void setInterrupt(bool value);
 
 void setup()
 {
@@ -63,7 +65,7 @@ void setup()
   setup_mqtt();
   connect();
   setStatus(OFF);
-  attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
+  setInterrupt(true);
 }
 
 void loop()
@@ -73,19 +75,32 @@ void loop()
   {
     connect();
   }
-
+  server.handleClient();
+  ElegantOTA.loop();
   client.loop();
 
   if (drySignalDetected)
   {
-    unsigned long currentMillis = millis();
-    if (firstDrySignal || currentMillis - lastDrySignalTime >= drySignalInterval)
+    if (firstDrySignal)
     {
+      Serial.println("First dry signal detected");
       setStatus(DRY);
       firstDrySignal = false;
       drySignalDetected = false;
-      lastDrySignalTime = currentMillis;
+      lastDrySignalTime = millis();
     }
+  }
+  if (!firstDrySignal && millis() - lastDrySignalTime < drySignalInterval)
+  {
+    if (interruptEnabled == true)
+    {
+      setInterrupt(false);
+    }
+  }
+  else
+  {
+    setInterrupt(true);
+    firstDrySignal = true;
   }
 }
 
@@ -106,12 +121,11 @@ void setup_pins()
 }
 void setup_wifi()
 {
-  // Connect to the WiFi network
   delay(10);
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
-
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED)
@@ -119,12 +133,8 @@ void setup_wifi()
     delay(500);
     Serial.print(".");
   }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
   clientIp = WiFi.localIP().toString();
-  Serial.println(clientIp);
+  Serial.printf("\nWiFi connected. IP address: %s\n", clientIp.c_str());
 }
 void setup_ota()
 {
@@ -212,6 +222,19 @@ void publishStatus(String status)
 {
   // Publish the status to the MQTT server
   client.publish(humidifierStatusTopic, String(status).c_str(), true);
+}
+void setInterrupt(bool value)
+{
+  if (value)
+  {
+    interruptEnabled = true;
+    attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
+  }
+  else
+  {
+    interruptEnabled = false;
+    detachInterrupt(digitalPinToInterrupt(DRY_PIN));
+  }
 }
 void handleDrySignal()
 {
