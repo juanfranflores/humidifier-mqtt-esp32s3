@@ -4,10 +4,8 @@
         "~": "homeassistant/switch/humidifier",
         "name": "Control",
         "unique_id": "humidifier_command",
-        "cmd_t": "~/command",
+        "cmd_t": "~/set",
         "stat_t": "~/status",
-        "payload_off": "0",
-        "payload_on": "1",
         "icon": "mdi:air-humidifier",
         "retain": "false",
         "device": {

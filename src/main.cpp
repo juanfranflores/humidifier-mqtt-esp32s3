@@ -1,87 +1,112 @@
+// ------------------------------LIBRERÍAS------------------------------
 #include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <ElegantOTA.h>
 
-// ---------------------------- DEFINICIÓN DE PINES ----------------------------
-
-#define HUMIDIFIER_PIN 12
+// ------------------------Definición de pines---------------------------
+#define RELAY_PIN 12
 #define DRY_LED 13
 #define ON_LED 14
 #define DRY_PIN 15
 #define ON_PIN 16
 
-// ---------------------------- CREDENCIALES DE CONEXIÓN ----------------------------
-
+// ------------------------------CONSTANTES------------------------------
 const char *ssid = "Flores 2.4GHz";
 const char *password = "Lilas549";
 const char *mqtt_server = "192.168.1.11";
 const char *clientId = "humidifier";
-
-// ---------------------------- ESTADOS ----------------------------
-
-const String ON = "Encendido";
-const String OFF = "Apagado";
-const String DRY = "Falta agua";
-
-// ---------------------------- VARIABLES GLOBALES ----------------------------
-
-volatile bool drySignalDetected = false;
-
-//  ---------------------------- TOPICS  ----------------------------
+String clientIp = "";
+const String ON = "ON";
+const String OFF = "OFF";
+const String DRY = "DRY";
+const unsigned long drySignalInterval = 15000; // 10 seconds
 
 const char *humidifierStatusTopic = "homeassistant/switch/humidifier/status";
-const char *humidifierCmdTopic = "homeassistant/switch/humidifier/command";
+const char *humidifierSetTopic = "homeassistant/switch/humidifier/set";
+const char *humidifierIpTopic = "homeassistant/text/humidifier/ip";
 
-//  ---------------------------- INSTANCIACIÓN DE OBJETOS ----------------------------
+// ------------------------------VARIABLES------------------------------
+volatile bool drySignalDetected = false;
+unsigned long lastDrySignalTime = 0;
+bool firstDrySignal = true;
+
+// ----------------------Inicialización de librerías----------------------
+WebServer server(80);
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-//  ---------------------------- DECLARACIÓN DE FUNCIONES ----------------------------
+// ------------------------------DECLARACIÓN DE FUNCIONES------------------------------
+
+void setup_serial();
+void setup_pins();
 void setup_wifi();
-void reconnect();
+void setup_ota();
+void setup_mqtt();
+void connect();
 void callback(char *topic, byte *message, unsigned int length);
-void setStatus(String command);
-void publishStatus(const char *topic, String command);
 void handleDrySignal();
+void setStatus(String status);
+void publishStatus(String status);
 
 void setup()
 {
-  Serial.begin(115200);
-  pinMode(HUMIDIFIER_PIN, OUTPUT);
-  pinMode(ON_PIN, INPUT_PULLUP);
-  pinMode(DRY_PIN, INPUT_PULLUP);
-  pinMode(ON_LED, OUTPUT);
-  pinMode(DRY_LED, OUTPUT);
-  attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
-  delay(2000);
-  Serial.println("Encendido :)");
+  // Initialize serial communication, setup pins, and attach the interrupt for the dry signal
+  setup_serial();
+  setup_pins();
   setup_wifi();
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
+  setup_ota();
+  setup_mqtt();
+  connect();
   setStatus(OFF);
-  reconnect();
+  attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
 }
 
 void loop()
 {
+  // Reconnect to the MQTT server if not connected and handle the dry signal if detected
   if (!client.connected())
   {
-    reconnect();
+    connect();
   }
+
   client.loop();
+
   if (drySignalDetected)
   {
-    Serial.println("Turning off humidifier due to dry signal");
-    digitalWrite(HUMIDIFIER_PIN, LOW); // turn off the humidifier
-    digitalWrite(ON_LED, LOW);
-    digitalWrite(DRY_LED, HIGH);
-    publishStatus(humidifierStatusTopic, DRY); // change the status to dry
-    drySignalDetected = false;                 // reset the flag
+    unsigned long currentMillis = millis();
+    if (firstDrySignal || currentMillis - lastDrySignalTime >= drySignalInterval)
+    {
+      setStatus(DRY);
+      firstDrySignal = false;
+      drySignalDetected = false;
+      lastDrySignalTime = currentMillis;
+    }
   }
 }
-//  ---------------------------- DEFINICIÓN DE FUNCIONES ----------------------------
+
+void setup_serial()
+{
+  Serial.begin(115200);
+  delay(5000);
+  Serial.println("\nEncendido.");
+}
+void setup_pins()
+{
+  // Set the pin modes for the humidifier, LEDs, and sensors
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(ON_PIN, INPUT_PULLUP);
+  pinMode(DRY_PIN, INPUT_PULLUP);
+  pinMode(ON_LED, OUTPUT);
+  pinMode(DRY_LED, OUTPUT);
+}
 void setup_wifi()
 {
+  // Connect to the WiFi network
   delay(10);
   Serial.println();
   Serial.print("Connecting to ");
@@ -98,19 +123,37 @@ void setup_wifi()
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  clientIp = WiFi.localIP().toString();
+  Serial.println(clientIp);
 }
-
-void reconnect()
+void setup_ota()
 {
-  // Loop until we're reconnected
+  server.on("/",
+            []()
+            {
+              server.send(200, "text/html", (String("Este es el webserver para subir firmware en <b>") + clientId + String("</b>. <a href=\"http://") + clientIp + String("/update\">Subir firmware</a>")).c_str());
+            });
+
+  ElegantOTA.begin(&server); // Start ElegantOTA
+  server.begin();
+  Serial.println("HTTP server started");
+}
+void setup_mqtt()
+{
+  // Setup the MQTT client
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+}
+void connect()
+{
+  // Reconnect to the MQTT server
   while (!client.connected())
   {
     Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
     if (client.connect(clientId))
     {
-      client.subscribe(humidifierCmdTopic);
+      client.subscribe(humidifierSetTopic);
+      client.publish(humidifierIpTopic, clientIp.c_str(), true);
       Serial.println("connected");
     }
     else
@@ -118,19 +161,18 @@ void reconnect()
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
       delay(5000);
     }
   }
 }
-
 void callback(char *topic, byte *message, unsigned int length)
 {
-  // Llegó un nuevo mensaje
+  // Handle incoming MQTT messages
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
   String messageTemp;
+
   for (int i = 0; i < length; i++)
   {
     Serial.print((char)message[i]);
@@ -138,66 +180,40 @@ void callback(char *topic, byte *message, unsigned int length)
   }
   Serial.println();
 
-  // Leo feeds
-  if ((String(topic) == humidifierCmdTopic))
+  if ((String(topic) == humidifierSetTopic))
   {
-    if (messageTemp == "1")
-    {
-      setStatus(ON);
-    }
-    else if (messageTemp == "0")
-    {
-      setStatus(OFF);
-    }
+    setStatus(messageTemp);
   }
 }
-
 void setStatus(String status)
 {
-  if (status == ON)
+  publishStatus(status);
+  Serial.printf("Setting status to %s\n", status.c_str());
+  if (status == DRY)
   {
-    detachInterrupt(digitalPinToInterrupt(DRY_PIN));
-    digitalWrite(HUMIDIFIER_PIN, HIGH);
-    delay(1000);
-    if (digitalRead(DRY_PIN) == LOW) 
-    {
-      digitalWrite(HUMIDIFIER_PIN, LOW);
-      delay(1000);
-      digitalWrite(HUMIDIFIER_PIN, HIGH);
-      digitalWrite(ON_LED, HIGH);
-      digitalWrite(DRY_LED, LOW);
-    }
-    else
-    {
-      status = DRY;
-      digitalWrite(HUMIDIFIER_PIN, LOW); // turn off the humidifier
-      digitalWrite(ON_LED, LOW);
-      digitalWrite(DRY_LED, HIGH);
-      Serial.println("Turning off humidifier due to dry signal");
-    }
+    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(ON_LED, LOW);
+    digitalWrite(DRY_LED, HIGH);
   }
-  else if (status == OFF)
+  else if (status == ON)
   {
-    digitalWrite(HUMIDIFIER_PIN, LOW);
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(ON_LED, HIGH);
+    digitalWrite(DRY_LED, LOW);
+  }
+  else // OFF
+  {
+    digitalWrite(RELAY_PIN, LOW);
     digitalWrite(ON_LED, LOW);
     digitalWrite(DRY_LED, LOW);
   }
-  publishStatus(humidifierStatusTopic, status);
-  Serial.print("Humidifier status: ");
-  Serial.println(status);
-  delay(1000);
-  attachInterrupt(digitalPinToInterrupt(DRY_PIN), handleDrySignal, RISING);
 }
-
-void publishStatus(const char *topic, String status)
+void publishStatus(String status)
 {
-  client.publish(topic, String(status).c_str(), true);
+  // Publish the status to the MQTT server
+  client.publish(humidifierStatusTopic, String(status).c_str(), true);
 }
-
 void handleDrySignal()
 {
-  if (digitalRead(DRY_PIN) == HIGH)
-  {
-    drySignalDetected = true;
-  }
+  drySignalDetected = true;
 }
